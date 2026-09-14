@@ -1,10 +1,11 @@
 {
-  "name": "t3code-mcp",
-  "version": "0.1.0",
-  "description": "MCP server for controlling a running T3 Code instance: list threads, read history, send messages, handle approvals.",
+  "name": "t3-code-mcp-prime",
+  "version": "0.2.0",
+  "description": "Prime-inspired bounded T3 conversation retrieval, exact-request follow-ups, and JSON scripting.",
   "type": "module",
   "bin": {
-    "t3code-mcp": "dist/index.js"
+    "t3-code-mcp-prime": "dist/server.js",
+    "t3-mcp-prime": "dist/cli.js"
   },
   "files": [
     "dist"
@@ -12,10 +13,11 @@
   "scripts": {
     "build": "tsc",
     "dev": "tsc --watch",
-    "smoke": "node scripts/smoke.mjs"
+    "smoke": "node scripts/prime-smoke.mjs",
+    "test": "node --test tests/*.test.mjs && python3 -m unittest discover -s tests -p '*_test.py'"
   },
   "engines": {
-    "node": ">=22"
+    "node": ">=24"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.30.0",
@@ -24,5 +26,6 @@
   "devDependencies": {
     "@types/node": "^24.0.0",
     "typescript": "^5.7.0"
-  }
+  },
+  "private": true
 }

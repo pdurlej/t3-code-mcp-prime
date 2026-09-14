@@ -1,3 +1,10 @@
 node_modules/
 dist/
 .env
+
+__pycache__/
+.local/
+*.token
+
+# Local operator handoffs and consultation evidence
+HANDOFF.md
