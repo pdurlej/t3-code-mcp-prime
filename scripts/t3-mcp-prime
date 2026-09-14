@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node "$(python3 -c 'import pathlib,sys; print(pathlib.Path(sys.argv[1]).resolve().parent.parent / "dist" / "cli.js")' "$0")" "$@"

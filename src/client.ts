@@ -1,4 +1,4 @@
-import { discoverOrigin, loadToken, ConfigError } from "./config.js";
+import { discoverOrigin, loadToken, ConfigError, localOrigin } from "./config.js";
 import type { ShellSnapshot, ThreadDetailSnapshot } from "./model.js";
 
 export class T3Error extends Error {}
@@ -18,13 +18,14 @@ export class T3Client {
   constructor(
     readonly origin: string,
     private readonly token: string,
-  ) {}
+  ) { localOrigin(origin); }
 
   private async req<T>(path: string, init?: RequestInit): Promise<T> {
     let res: Response;
     try {
       res = await fetch(`${this.origin}${path}`, {
         ...init,
+        redirect: "error",
         headers: {
           authorization: `Bearer ${this.token}`,
           ...(init?.body ? { "content-type": "application/json" } : {}),
@@ -39,16 +40,12 @@ export class T3Client {
       );
     }
     if (res.status === 401 || res.status === 403) {
-      const body = await res.text().catch(() => "");
       throw new T3Error(
-        `T3 Code rejected the auth token (${res.status}${body ? `: ${body.slice(0, 200)}` : ""}). ` +
-          `Mint a fresh one with \`npx t3@latest auth session issue --token-only --label t3code-mcp --ttl 365d\` ` +
-          `and update T3_TOKEN.`,
+        `T3 Code rejected the auth token (${res.status}). Check the local token file and scopes.`,
       );
     }
     if (!res.ok) {
-      const body = await res.text().catch(() => "");
-      throw new T3Error(`T3 API ${path} failed: HTTP ${res.status} ${body.slice(0, 500)}`);
+      throw new T3Error(`T3 API request failed: HTTP ${res.status}. No response body logged.`);
     }
     return (await res.json()) as T;
   }
@@ -58,6 +55,7 @@ export class T3Client {
     let res: Response;
     try {
       res = await fetch(`${this.origin}/.well-known/t3/environment`, {
+        redirect: "error",
         signal: AbortSignal.timeout(3_000),
       });
     } catch (e) {
