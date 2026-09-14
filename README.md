@@ -1,41 +1,77 @@
 # T3 Code MCP Prime
 
-A fork of [ThomasCrund/t3code-mcp](https://github.com/ThomasCrund/t3code-mcp),
-inspired by [Prime Intellect's Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent).
-Find the relevant part of another T3 conversation, inspect its state, and ask it
-an authorized follow-up without copying the whole conversation into your context.
+**Give your agents context beyond their own thread.**
 
-## What “Prime” means here
+Fork of [ThomasCrund/t3code-mcp](https://github.com/ThomasCrund/t3code-mcp) · inspired by [Prime Agent](https://github.com/PrimeIntellect-ai/prime-agent). Upstream has no LICENSE file; [provenance and licensing notes](#what-prime-means-here) below.
 
-Prime Agent keeps working data in a programmable environment and exposes small,
-selected views to the model. We borrow that approach: search first, read a window,
-keep large results in a Python/JavaScript variable, and expose only relevant excerpts.
-We also borrow the distinction between observing another agent and messaging it.
-This is not Prime Agent's runtime, a persistent Python kernel, or its `/refine` memory
-system. No Prime source code is copied. There is no automatic memory rewriting.
+Find the conversation that matters. Read the relevant part. Ask the agent already
+working on it — and collect the reply to your exact question.
 
-This fork retains upstream history and its HTTP client/model contracts.
-The original README/design/smoke script are retained under `docs/upstream-*` and
-`scripts/upstream-smoke.mjs` for provenance, not as current operating instructions.
-Upstream HEAD: `3b5cb72572af569a90ff13e30785f1cc6cd9bf18`.
-The fetched upstream contains no LICENSE file. This fork preserves upstream notices
-and adds no license grant. The package is marked private to prevent accidental npm publication.
+**T3 Code MCP Prime** connects your local [T3 Code](https://github.com/pingdotgg/t3code)
+conversations to MCP clients and scripts, so you spend less time carrying context
+between agents.
 
-## Use
+## One conversation can inform the next
 
-Requires Node 24+ with `node:sqlite`, pnpm and T3 Code running on this Mac.
-Validated against T3 Code 0.0.40; internal projection schemas can change.
+> “Find where we discussed the migration. Read the decision, ask that agent to
+> challenge this approach, and bring back its answer.”
+
+Give that request to your MCP-connected agent. The tools let it follow the trail:
+
+| You need to… | Prime gives your agent… |
+| --- | --- |
+| Find an earlier decision | Content search across threads, with one result per conversation when grouped |
+| Recover just enough context | Small excerpts, surrounding messages, and chunked reads |
+| Ask for a second opinion | A follow-up to an existing idle thread, preserving its permission and interaction modes |
+| Know what came back | The reply for that exact request, with completed, interrupted, and partial states distinguished |
+
+**Search → read → ask → collect.** Use it through MCP, or keep the retrieved data
+in a Python/JavaScript script and show the model only the excerpts it needs.
+
+## Get started
+
+Tested on **macOS with T3 Code 0.0.40**. Requires **Node.js 24+**, **pnpm**, and
+**Python 3.11+** for the setup helpers. Keep T3 Code running locally. T3 Alpha’s internal projection schemas can change between versions.
 
 ```sh
+git clone https://github.com/pdurlej/t3-code-mcp-prime.git
+cd t3-code-mcp-prime
 pnpm install --frozen-lockfile --ignore-scripts
 pnpm build
-pnpm test
-node dist/cli.js t3_status
-node dist/cli.js list_threads '{"query":"macbook","limit":5}'
-node dist/cli.js search_messages '{"query":"Prime", "limit":3}'
+
+# Try a read-only search — no token needed.
+node dist/cli.js search_messages '{"query":"migration","groupByThread":true,"limit":3,"snippetChars":160}'
 ```
 
-The seven MCP tools and JSON CLI have the same names and arguments:
+Each grouped result includes the thread title, matching-message count, current
+state, and a message ID you can use to read the surrounding conversation.
+Search is literal and case-insensitive; use words from the conversation.
+
+Connect it to your installed **Codex, Claude Code, or Cursor** client:
+
+```sh
+python3 scripts/register-local.py
+
+# Optional: enable sending follow-ups to other threads.
+python3 scripts/setup-token.py
+```
+
+Reload the MCP connection or start a new provider session. The setup helper creates
+a dedicated scoped credential; [local setup](#local-setup) explains what it changes
+and how to remove it.
+
+### Built for focused context
+
+Seven tools. Local conversation reads. Explicit follow-ups. The MCP adds no
+background daemon, vector database, or model API dependency.
+
+Today, it searches message text and sends to existing idle threads. It does not
+provide semantic memory, a durable job queue, or mid-turn steering. It reports
+what happened to a turn; the calling agent still verifies the work.
+
+## Seven tools, one interface
+
+The MCP tools and JSON CLI use the same names and arguments:
 
 | Tool | Purpose |
 | --- | --- |
@@ -153,5 +189,20 @@ python3 scripts/setup-token.py --revoke
 ```
 
 Rollback removes only matching Prime registrations/CLI link and revokes only its dedicated
-session. Source, test artifacts, and conversation history stay available. No public remote
-is configured; the `upstream` remote has pushing disabled.
+session. Source, test artifacts, and conversation history stay available. The public fork is [pdurlej/t3-code-mcp-prime](https://github.com/pdurlej/t3-code-mcp-prime).
+
+## What “Prime” means here
+
+Prime Agent keeps working data in a programmable environment and exposes small,
+selected views to the model. We borrow that approach: search first, read a window,
+keep large results in a Python/JavaScript variable, and expose only relevant excerpts.
+We also borrow the distinction between observing another agent and messaging it.
+This is not Prime Agent's runtime, a persistent Python kernel, or its `/refine` memory
+system. No Prime source code is copied. There is no automatic memory rewriting.
+
+This fork retains upstream history and its HTTP client/model contracts.
+The original README/design/smoke script are retained under `docs/upstream-*` and
+`scripts/upstream-smoke.mjs` for provenance, not as current operating instructions.
+Upstream HEAD: `3b5cb72572af569a90ff13e30785f1cc6cd9bf18`.
+The fetched upstream contains no LICENSE file. This fork preserves upstream notices
+and adds no license grant. The package is marked private to prevent accidental npm publication.
