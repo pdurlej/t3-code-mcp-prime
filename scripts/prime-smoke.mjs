@@ -18,7 +18,7 @@ async function call(name,args={}) {
 try {
   await client.connect(transport);
   const tools=(await client.listTools()).tools;
-  assert.equal(tools.length,7);
+  assert.equal(tools.length,13);
   assert.ok(!tools.some(t=>/approval|delete|create_thread/.test(t.name)));
   const status=await call('t3_status');assert.equal(status.runtime.reachable,true);
   const list=await call('list_threads',{limit:3});assert.ok(list.threads.length>0);
@@ -34,5 +34,5 @@ try {
   assert.ok(grouped.matches.length);
   assert.equal(new Set(grouped.matches.map(m=>m.threadId)).size,grouped.matches.length);
   assert.ok(grouped.matches.every(m=>m.hitCount>=1&&m.state&&m.messageId));
-  console.log('PASS MCP initialize + 7 tools + live status + list + bounded read + content search + grouped search');
+  console.log('PASS MCP initialize + 13 tools + live status + list + bounded read + content search + grouped search');
 } finally { await client.close(); }

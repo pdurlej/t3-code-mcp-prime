@@ -14,12 +14,12 @@ function fixture(t) {
   const path = join(dir,'state.sqlite');
   const db = new DatabaseSync(path);
   db.exec(`PRAGMA journal_mode=WAL;
-    CREATE TABLE projection_projects(project_id TEXT PRIMARY KEY,title TEXT,deleted_at TEXT);
+    CREATE TABLE projection_projects(project_id TEXT PRIMARY KEY,title TEXT,deleted_at TEXT,workspace_root TEXT);
     CREATE TABLE projection_threads(thread_id TEXT PRIMARY KEY,project_id TEXT,title TEXT,branch TEXT,latest_turn_id TEXT,updated_at TEXT,deleted_at TEXT,archived_at TEXT,pending_approval_count INTEGER DEFAULT 0,pending_user_input_count INTEGER DEFAULT 0,has_actionable_proposed_plan INTEGER DEFAULT 0);
     CREATE TABLE projection_thread_sessions(thread_id TEXT PRIMARY KEY,status TEXT,provider_name TEXT,updated_at TEXT);
     CREATE TABLE projection_turns(row_id INTEGER PRIMARY KEY,thread_id TEXT,turn_id TEXT,pending_message_id TEXT,state TEXT,completed_at TEXT);
     CREATE TABLE projection_thread_messages(message_id TEXT PRIMARY KEY,thread_id TEXT,turn_id TEXT,role TEXT,text TEXT,is_streaming INTEGER DEFAULT 0,created_at TEXT);
-    INSERT INTO projection_projects VALUES('p','Project',NULL);
+    INSERT INTO projection_projects VALUES('p','Project',NULL,'/workspace');
     INSERT INTO projection_threads(thread_id,project_id,title,latest_turn_id,updated_at) VALUES('t','p','Main','turn-2','2026-09-14');
     INSERT INTO projection_thread_sessions VALUES('t','ready','codex','2026-09-14');
     INSERT INTO projection_turns VALUES(1,'t','turn-1','req-1','completed','2026-09-13'),(2,'t','turn-2','req-2','interrupted','2026-09-14');
@@ -254,4 +254,12 @@ test('grouped search counts filtered hits before paging threads and hydrates rep
   assert.equal((await service.call('search_messages',{query:'needle',groupByThread:true,includeArchived:true})).matches.length,3);
   const normal=await service.call('search_messages',{query:'needle',limit:3});
   assert.deepEqual(normal.matches.map(m=>m.threadId),['t','t','t']);assert.equal(normal.matches[0].hitCount,undefined);
+});
+test('thread discovery and reads expose model, checkout, and modes',async t=>{
+ const {db,service}=fixture(t);
+ db.exec("ALTER TABLE projection_threads ADD COLUMN model_selection_json TEXT; ALTER TABLE projection_threads ADD COLUMN worktree_path TEXT; ALTER TABLE projection_threads ADD COLUMN runtime_mode TEXT; ALTER TABLE projection_threads ADD COLUMN interaction_mode TEXT;");
+ db.prepare('UPDATE projection_threads SET model_selection_json=?,branch=?,worktree_path=?,runtime_mode=?,interaction_mode=?').run('{"instanceId":"codex","model":"example"}','feature','/workspace/isolated','full-access','default');
+ const list=await service.call('list_threads',{});
+ assert.equal(list.threads[0].modelSelection.model,'example');assert.equal(list.threads[0].projectPath,'/workspace');assert.equal(list.threads[0].worktreePath,'/workspace/isolated');assert.equal(list.threads[0].runtimeMode,'full-access');
+ const read=await service.call('get_thread',{threadId:'t'});assert.equal(read.thread.branch,'feature');
 });

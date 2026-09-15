@@ -3,7 +3,7 @@
 **Give your agents context beyond their own thread.**
 
 Search your local T3 conversations, ask the agent working in another thread,
-and collect the reply — without carrying the context between them yourself.
+and close the review loop — without carrying the context between them yourself.
 
 > “Find our migration discussion. Ask that agent to challenge this approach.
 > Bring back its answer.”
@@ -41,11 +41,11 @@ Search uses literal words; follow-ups go to existing idle threads.
 ## Go deeper
 
 - **[Setup & uninstall](docs/setup.md)** — credentials, client registration and local configuration.
-- **[Tool reference](docs/reference.md)** — seven tools, scripting, reply states and retry behaviour.
+- **[Tool reference](docs/reference.md)** — retrieval, scripting, reply states and retry behaviour.
+- **[Peer review loop](docs/review-loop.md)** — durable messages, action-triggered reviews and returned decisions.
 - **[Why Prime?](docs/provenance.md)** — inspiration, upstream history and licensing.
 
-Tested with **T3 Code 0.0.40**; Alpha schemas may change. No semantic memory,
-durable queue or mid-turn steering.
+Tested with **T3 Code 0.0.40**; Alpha schemas may change. Durable delivery is opt-in. No semantic memory or mid-turn steering.
 
 ---
 

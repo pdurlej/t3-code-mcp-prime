@@ -16,7 +16,7 @@ export function stateOf(t: Row): ThreadState {
   return "idle";
 }
 
-const threadSelect = `SELECT t.*, p.title AS project_title,
+const threadSelect = `SELECT t.*, p.title AS project_title, p.workspace_root AS project_path,
   s.status AS session_status, s.provider_name, s.updated_at AS session_updated_at,
   u.state AS turn_state, u.completed_at
   FROM projection_threads t
@@ -24,12 +24,20 @@ const threadSelect = `SELECT t.*, p.title AS project_title,
   LEFT JOIN projection_thread_sessions s USING(thread_id)
   LEFT JOIN projection_turns u ON u.thread_id=t.thread_id AND u.turn_id=t.latest_turn_id`;
 
+function parseModel(value: unknown): unknown {
+  if (typeof value !== "string") return null;
+  try { return JSON.parse(value); } catch { return null; }
+}
+
 export function threadRow(t: Row) {
   return { threadId: t.thread_id, title: String(t.title).slice(0, 300), projectId: t.project_id,
     project: String(t.project_title).slice(0, 300), provider: t.provider_name ?? null,
     state: stateOf(t), sessionStatus: t.session_status ?? null, turnId: t.latest_turn_id,
     turnState: t.turn_state ?? null, archived: Boolean(t.archived_at),
-    updatedAt: t.updated_at, sessionUpdatedAt: t.session_updated_at ?? null };
+    updatedAt: t.updated_at, sessionUpdatedAt: t.session_updated_at ?? null,
+    modelSelection: parseModel(t.model_selection_json), branch: t.branch ?? null,
+    worktreePath: t.worktree_path ?? null, projectPath: t.project_path ?? null,
+    runtimeMode: t.runtime_mode ?? null, interactionMode: t.interaction_mode ?? null };
 }
 
 export function messageRow(m: Row, maxChars = 800, offset = 0) {
