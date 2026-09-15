@@ -263,3 +263,89 @@ test('thread discovery and reads expose model, checkout, and modes',async t=>{
  assert.equal(list.threads[0].modelSelection.model,'example');assert.equal(list.threads[0].projectPath,'/workspace');assert.equal(list.threads[0].worktreePath,'/workspace/isolated');assert.equal(list.threads[0].runtimeMode,'full-access');
  const read=await service.call('get_thread',{threadId:'t'});assert.equal(read.thread.branch,'feature');
 });
+
+// --- attachments, spawn, interrupt, archive (2026-09-15) -------------------
+import { writeFileSync, existsSync, readdirSync } from 'node:fs';
+import { stageAttachments } from '../dist/attachments.js';
+
+function attachmentsSandbox(t) {
+  const dir = mkdtempSync(join(tmpdir(), 't3-prime-att-'));
+  process.env.T3_ATTACHMENTS_DIR = join(dir, 'attachments');
+  t.after(() => { delete process.env.T3_ATTACHMENTS_DIR; rmSync(dir, { recursive: true, force: true }); });
+  return dir;
+}
+
+test('stageAttachments copies files as T3 pending attachments with correct ids and mime', t => {
+  const dir = attachmentsSandbox(t);
+  writeFileSync(join(dir, 'brief.md'), '# hi'); writeFileSync(join(dir, 'shot.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47])); writeFileSync(join(dir, 'empty.txt'), '');
+  const [md, png] = stageAttachments([join(dir, 'brief.md'), join(dir, 'shot.png')]);
+  assert.match(md.id, /^pending-[0-9a-f-]{36}-md$/); assert.equal(md.type, 'file'); assert.equal(md.mimeType, 'text/markdown'); assert.equal(md.name, 'brief.md'); assert.equal(md.sizeBytes, 4);
+  assert.match(png.id, /^pending-[0-9a-f-]{36}$/); assert.equal(png.type, 'image'); assert.equal(png.mimeType, 'image/png');
+  assert.ok(existsSync(join(process.env.T3_ATTACHMENTS_DIR, `${md.id}.md`)));
+  assert.ok(existsSync(join(process.env.T3_ATTACHMENTS_DIR, `${png.id}.png`)));
+  assert.throws(() => stageAttachments([join(dir, 'empty.txt')]), /empty/);
+  assert.throws(() => stageAttachments([join(dir, 'missing.md')]));
+  assert.deepEqual(stageAttachments([]), []);
+});
+
+test('send_message stages attachments before dispatch and reports names only', async t => {
+  const dir = attachmentsSandbox(t); writeFileSync(join(dir, 'a.md'), 'x');
+  const { store } = fixture(t); const commands = [];
+  const s = sender(store, idle, async cmd => { commands.push(cmd); return { sequence: 1 }; });
+  const r = await s.call('send_message', { threadId: 't', message: 'Read this', attachments: [join(dir, 'a.md')] });
+  assert.equal(r.accepted, true); assert.deepEqual(r.attachments, ['a.md']);
+  assert.equal(commands[0].message.attachments.length, 1); assert.match(commands[0].message.attachments[0].id, /^pending-/);
+  assert.equal(readdirSync(process.env.T3_ATTACHMENTS_DIR).length, 1);
+});
+
+test('send_message without attachments keeps the empty attachments array', async t => {
+  const { store } = fixture(t); const commands = [];
+  await sender(store, idle, async cmd => { commands.push(cmd); return { sequence: 1 }; }).call('send_message', { threadId: 't', message: 'Hello' });
+  assert.deepEqual(commands[0].message.attachments, []);
+});
+
+const template = { id: 't', projectId: 'p', runtimeMode: 'approval-required', interactionMode: 'plan', branch: 'main',
+  modelSelection: { instanceId: 'claudeAgent', model: 'claude-fable-5-1' }, session: { status: 'ready' }, latestTurn: { state: 'completed' } };
+
+test('spawn_thread creates then starts, copying template modes; retry is idempotent', async t => {
+  const { store, db } = fixture(t); const commands = [];
+  const s = sender(store, template, async cmd => {
+    commands.push(cmd);
+    if (cmd.type === 'thread.create') db.prepare("INSERT INTO projection_threads(thread_id,project_id,title,updated_at) VALUES(?,?,?,?)").run(cmd.threadId, cmd.projectId, cmd.title, 'now');
+    if (cmd.type === 'thread.turn.start') db.prepare('INSERT INTO projection_thread_messages VALUES(?,?,NULL,?,?,0,?)').run(cmd.message.messageId, cmd.threadId, 'user', cmd.message.text, '09');
+    return { sequence: 5 };
+  });
+  const r = await s.call('spawn_thread', { templateThreadId: 't', title: 'Pilot X', message: 'Start' });
+  assert.equal(r.created, true); assert.equal(commands.length, 2);
+  assert.equal(commands[0].type, 'thread.create'); assert.equal(commands[0].commandId, r.threadId); assert.equal(commands[0].projectId, 'p');
+  assert.deepEqual(commands[0].modelSelection, template.modelSelection); assert.equal(commands[0].runtimeMode, 'approval-required'); assert.equal(commands[0].branch, 'main'); assert.equal(commands[0].worktreePath, null);
+  assert.equal(commands[1].type, 'thread.turn.start'); assert.equal(commands[1].threadId, r.threadId); assert.equal(commands[1].commandId, r.requestId); assert.equal(commands[1].interactionMode, 'plan');
+  const again = await s.call('spawn_thread', { templateThreadId: 't', title: 'Pilot X', message: 'Start', threadId: r.threadId, requestId: r.requestId });
+  assert.equal(again.deduplicated, true); assert.equal(again.created, false); assert.equal(commands.length, 2);
+});
+
+test('spawn_thread refuses a template without model or modes', async t => {
+  const { store } = fixture(t);
+  await assert.rejects(() => sender(store, { ...template, modelSelection: null }, async () => { throw new Error('must not send'); }).call('spawn_thread', { templateThreadId: 't', title: 'X', message: 'Y' }), /defaults/);
+});
+
+test('interrupt_thread targets the active turn only', async t => {
+  const { store } = fixture(t); const commands = [];
+  const idleResult = await sender(store, template, async cmd => { commands.push(cmd); return { sequence: 1 }; }).call('interrupt_thread', { threadId: 't', reason: 'wrong task' });
+  assert.equal(idleResult.interrupted, false); assert.equal(commands.length, 0);
+  const r = await sender(store, { ...template, session: { status: 'running', activeTurnId: 'live-turn' } }, async cmd => { commands.push(cmd); return { sequence: 2 }; }).call('interrupt_thread', { threadId: 't', reason: 'wrong task' });
+  assert.equal(r.interrupted, true); assert.equal(commands[0].type, 'thread.turn.interrupt'); assert.equal(commands[0].turnId, 'live-turn'); assert.equal(commands[0].threadId, 't');
+  const starting = await sender(store, { ...template, session: { status: 'starting' }, latestTurn: null }, async cmd => { commands.push(cmd); return { sequence: 3 }; }).call('interrupt_thread', { threadId: 't', reason: 'wrong task' });
+  assert.equal(starting.interrupted, true); assert.equal(starting.phase, 'starting'); assert.equal('turnId' in commands[1], false);
+});
+
+test('archive_thread refuses running threads and is idempotent', async t => {
+  const { store } = fixture(t); const commands = [];
+  await assert.rejects(() => sender(store, { ...template, session: { status: 'running', activeTurnId: 'x' } }, async () => { throw new Error('no'); }).call('archive_thread', { threadId: 't' }), /active turn/);
+  const r = await sender(store, template, async cmd => { commands.push(cmd); return { sequence: 3 }; }).call('archive_thread', { threadId: 't' });
+  assert.equal(r.changed, true); assert.equal(commands[0].type, 'thread.archive');
+  const same = await sender(store, { ...template, archivedAt: 'now' }, async () => { throw new Error('no'); }).call('archive_thread', { threadId: 't' });
+  assert.equal(same.changed, false);
+  const back = await sender(store, { ...template, archivedAt: 'now' }, async cmd => { commands.push(cmd); return { sequence: 4 }; }).call('archive_thread', { threadId: 't', archived: false });
+  assert.equal(back.changed, true); assert.equal(commands[1].type, 'thread.unarchive');
+});

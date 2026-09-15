@@ -25,7 +25,7 @@ export const descriptions: Record<ToolName,string> = { ...baseDescriptions,
   cancel_review:'Stop a stuck review and cancel provably unattempted messages, retaining text. Cannot recall messages already sent. Does not approve or interrupt provider turns.',
   resolve_review:'Close feedback by reporting adopted/rejected/deferred findings with reasons and evidence to the reviewer. Does not trigger another review.',
 };
-export const mutatingTools = new Set(['send_message','queue_message','deliver_pending','request_review','resolve_review','cancel_review']);
+export const mutatingTools = new Set(['send_message','spawn_thread','interrupt_thread','archive_thread','queue_message','deliver_pending','request_review','resolve_review','cancel_review']);
 const routesSchema = z.record(z.string(),z.object({ writerThreadId:id, reviewerThreadId:id }).strict());
 export function loadRoutes() {
   try { return routesSchema.parse(JSON.parse(readFileSync(process.env.T3_PRIME_ROUTES_FILE ?? join(homedir(),'.config/t3-code-mcp-prime/routes.json'),'utf8'))); }

@@ -8,9 +8,9 @@ and close the review loop — without carrying the context between them yourself
 > “Find our migration discussion. Ask that agent to challenge this approach.
 > Bring back its answer.”
 
-| Find | Read | Ask | Collect |
-| --- | --- | --- | --- |
-| Search across threads | Pull only the context you need | Follow up with another agent | Get the reply to your exact request |
+| Find | Read | Ask | Collect | Run |
+| --- | --- | --- | --- | --- |
+| Search across threads | Pull only the context you need | Follow up with another agent, with attachments | Get the reply to your exact request | Spawn, interrupt and archive threads |
 
 Works through **MCP or the CLI**, with **Codex, Claude Code and Cursor**.
 

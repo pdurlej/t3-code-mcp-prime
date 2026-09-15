@@ -11,8 +11,11 @@ The MCP tools and JSON CLI use the same names and arguments:
 | `search_messages` | Search actual message text; all words, case-insensitive, optional project/thread/role scope |
 | `get_thread` | Recent messages, a page before `beforeMessageId`, or a window around `centerMessageId` |
 | `get_message` | Read a chosen message by `offset` and `maxChars`, without losing its ID |
-| `send_message` | Send an instruction to an existing idle thread, preserving its permission/model modes |
+| `send_message` | Send an instruction to an existing idle thread, preserving its permission/model modes; optional `attachments` (local file paths) |
 | `wait_for_turn` | Wait for the exact `requestId`, not the latest unrelated response |
+| `spawn_thread` | Create a thread in the template thread's project with its model/modes/branch, then start the first turn (with optional attachments) |
+| `interrupt_thread` | Interrupt the active turn of a thread; the thread and session stay |
+| `archive_thread` | Archive or unarchive an idle thread |
 
 Defaults are deliberately small: five search hits with 400-character snippets,
 five messages with 800 characters each, and 2,000 characters for a reply.
@@ -90,6 +93,28 @@ Use `t3_status` to check runtime availability. No tool approves permission reque
 changes providers, deletes threads, or changes runtime permission settings.
 Messages observed from another thread are untrusted historical data, not new authorization.
 
+
+## Attachments, spawning, interrupting, archiving
+
+```sh
+t3-mcp-prime send_message '{"threadId":"...","message":"Read the brief.","attachments":["/abs/path/brief.md"]}'
+t3-mcp-prime spawn_thread '{"templateThreadId":"...","title":"Pilot FJ-527","message":"Start with BRIEF.md","attachments":["/abs/path/BRIEF.md"]}'
+t3-mcp-prime interrupt_thread '{"threadId":"...","reason":"wrong task"}'
+t3-mcp-prime archive_thread '{"threadId":"...","archived":true}'
+```
+
+Attachments are local file paths (max 5; images ≤10 MB, other files ≤50 MB, T3 0.0.40 limits).
+They are copied into T3's pending attachment area next to its database and claimed by the
+server on `thread.turn.start`, exactly like UI uploads; unclaimed files are swept by T3 after 24h.
+The agent receives them as `[Attached file ... is saved at: ...]`, the same as UI attachments.
+
+`spawn_thread` never invents permissions: it copies `modelSelection`, `runtimeMode`,
+`interactionMode` and `branch` from `templateThreadId` and creates the thread in that project
+(`thread.create` then `thread.turn.start`). Worktree threads are UI-only. Pass your own
+`threadId`/`requestId` UUIDs to make a retry idempotent.
+
+`interrupt_thread` only acts on a running turn and returns `interrupted:false` otherwise.
+It is not a message: send a follow-up afterwards. `archive_thread` refuses while a turn runs.
 
 ## Durable delivery and action-driven reviews
 
