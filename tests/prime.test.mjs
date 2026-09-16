@@ -349,3 +349,17 @@ test('archive_thread refuses running threads and is idempotent', async t => {
   const back = await sender(store, { ...template, archivedAt: 'now' }, async cmd => { commands.push(cmd); return { sequence: 4 }; }).call('archive_thread', { threadId: 't', archived: false });
   assert.equal(back.changed, true); assert.equal(commands[1].type, 'thread.unarchive');
 });
+
+
+test('runtimeMode override applies to the dispatched turn and to spawned threads', async t => {
+  const { store, db } = fixture(t); const commands = [];
+  const s = sender(store, idle, async cmd => { commands.push(cmd); db.prepare('INSERT OR IGNORE INTO projection_thread_messages VALUES(?,?,NULL,?,?,0,?)').run(cmd.message?.messageId ?? cmd.commandId, cmd.threadId, 'user', cmd.message?.text ?? '', '10'); return { sequence: 1 }; });
+  const r = await s.call('send_message', { threadId: 't', message: 'Go', runtimeMode: 'full-access' });
+  assert.equal(r.runtimeMode, 'full-access'); assert.equal(commands[0].runtimeMode, 'full-access');
+  await sender(store, idle, async cmd => { commands.push(cmd); return { sequence: 2 }; }).call('send_message', { threadId: 't', message: 'Go again' });
+  assert.equal(commands[1].runtimeMode, 'approval-required');
+  const sp = sender(store, template, async cmd => { commands.push(cmd); if (cmd.type === 'thread.create') db.prepare("INSERT INTO projection_threads(thread_id,project_id,title,updated_at) VALUES(?,?,?,?)").run(cmd.threadId, cmd.projectId, cmd.title, 'now'); return { sequence: 3 }; });
+  await sp.call('spawn_thread', { templateThreadId: 't', title: 'X', message: 'Y', runtimeMode: 'full-access' });
+  assert.equal(commands.at(-2).type, 'thread.create'); assert.equal(commands.at(-2).runtimeMode, 'full-access'); assert.equal(commands.at(-1).runtimeMode, 'full-access');
+  await assert.rejects(() => s.call('send_message', { threadId: 't', message: 'Go', runtimeMode: 'yolo' }));
+});
