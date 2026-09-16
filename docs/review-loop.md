@@ -47,7 +47,11 @@ t3-mcp-prime delivery_status '{}'
 t3-mcp-prime deliver_pending '{"limit":3}'
 ```
 
-`queue_message` persists before dispatch. It differs from the existing immediate `send_message`. Delivery to busy threads survives the caller exiting and the worker restarting. Earlier pending messages block later messages to that same thread. An unresolved message can therefore stall its recipient; other recipients continue.
+`queue_message` persists before dispatch. It differs from the existing immediate `send_message`.
+With `afterThreadId` + `afterRequestId` the worker holds the message until that request's turn has
+ended (completed, interrupted or error) and then delivers it: a dispatcher can hand a task to a
+worker thread, end its own turn, and be woken by the worker instead of polling `wait_for_turn`.
+The held message still occupies its recipient's queue position. Delivery to busy threads survives the caller exiting and the worker restarting. Earlier pending messages block later messages to that same thread. An unresolved message can therefore stall its recipient; other recipients continue.
 
 The owner-only local `mailbox.sqlite` stores full pending text. After T3's projection confirms the same UUID, recipient, role and text, Prime deletes the body and retains the receipt/hash. Ambiguous HTTP outcomes retry the same UUID and text. This relies on T3's command-ID deduplication; it is not a universal exactly-once guarantee across arbitrary T3 resets. Never delete unresolved reservations or replace their IDs to retry.
 

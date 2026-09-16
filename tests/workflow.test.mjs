@@ -9,7 +9,7 @@ import { WorkflowService, mailboxBinding } from '../dist/workflow.js';
 function setup(t) {
   const dir=mkdtempSync(join(tmpdir(),'prime-workflow-'));
   const projection=new Map(),sent=[],reply={value:null}; let mode='busy';
-  const prime={store:{thread(id){return {thread_id:id};},one(sql,id){return projection.get(id);}},async call(name,a){
+  const turns=new Map(); const prime={store:{thread(id){return {thread_id:id};},one(sql,...args){return projection.get(args[0]);},request(t,m){return turns.get(m);}},async call(name,a){
     if(name==='wait_for_turn') return reply.value ?? {reply:null,replyState:'missing'};
     sent.push(a);
     if(mode==='error') throw Error('sensitive upstream details');
@@ -19,7 +19,7 @@ function setup(t) {
   let b=new Mailbox('instance',dir);
   let service=new WorkflowService(prime,()=>b,()=>({pair:{writerThreadId:'writer',reviewerThreadId:'reviewer'}}));
   t.after(()=>{b.close();rmSync(dir,{recursive:true,force:true});});
-  return {get b(){return b;}, get service(){return service;},sent,reply,projection,setMode(m){mode=m;},due(){b.db.exec('UPDATE outbox SET next_attempt=0');},restart(){b.close();b=new Mailbox('instance',dir);service=new WorkflowService(prime,()=>b,()=>({pair:{writerThreadId:'writer',reviewerThreadId:'reviewer'}}));},dir};
+  return {get b(){return b;}, get service(){return service;},sent,reply,projection,turns,setMode(m){mode=m;},due(){b.db.exec('UPDATE outbox SET next_attempt=0');},restart(){b.close();b=new Mailbox('instance',dir);service=new WorkflowService(prime,()=>b,()=>({pair:{writerThreadId:'writer',reviewerThreadId:'reviewer'}}));},dir};
 }
 test('durable busy and ambiguous sends survive restart; exact ID/body and deletion only after projection',async t=>{
  const f=setup(t),id=randomUUID(),args={threadId:'writer',requestId:id,message:'original body'};
@@ -100,4 +100,21 @@ test('binding follows database identity, not desktop port, while explicit origin
    process.env.T3_ORIGIN='http://localhost:3774';assert.notEqual(mailboxBinding(),explicit);
    delete process.env.T3_ORIGIN;renameSync(path,path+'.old');writeFileSync(path,'replacement');assert.notEqual(mailboxBinding(),desktop);
  } finally {if(oldDb===undefined)delete process.env.T3_DATABASE;else process.env.T3_DATABASE=oldDb;if(oldOrigin===undefined)delete process.env.T3_ORIGIN;else process.env.T3_ORIGIN=oldOrigin;}
+});
+
+test('conditional delivery waits for another request to end, then delivers once',async t=>{
+ const f=setup(t),id=randomUUID();f.setMode('ok');
+ f.projection.set('req-ds',{thread_id:'ds',role:'user',text:'work'});
+ await f.service.call('queue_message',{threadId:'writer',requestId:id,message:'DS finished; read its reply',afterThreadId:'ds',afterRequestId:'req-ds'});
+ f.due();await f.service.call('deliver_pending',{});
+ assert.equal(f.sent.length,0);assert.equal(f.b.mail(id).status,'pending');assert.equal(f.b.mail(id).attempts,0);
+ assert.match(f.b.mail(id).last_error,/Waiting for request req-ds/);
+ f.turns.set('req-ds',{state:'running'});f.due();await f.service.call('deliver_pending',{});
+ assert.equal(f.sent.length,0);
+ f.turns.set('req-ds',{state:'completed'});f.due();await f.service.call('deliver_pending',{});
+ assert.equal(f.sent.length,1);assert.equal(f.sent[0].requestId,id);assert.equal(f.b.mail(id).status,'delivered');
+ await assert.rejects(()=>f.service.call('queue_message',{threadId:'writer',requestId:randomUUID(),message:'x',afterThreadId:'ds'}),/together/);
+ await assert.rejects(()=>f.service.call('queue_message',{threadId:'writer',requestId:randomUUID(),message:'x',afterThreadId:'ds',afterRequestId:'unknown'}),/not a known/);
+ const status=await f.service.call('delivery_status',{});
+ assert.equal(status.messages.find(m=>m.request_id===id).after_request_id,'req-ds');
 });
