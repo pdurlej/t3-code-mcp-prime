@@ -9,6 +9,15 @@ export const stateDirectory = () => process.env.T3_PRIME_STATE_DIR ?? join(homed
 export type Mail = { request_id: string; thread_id: string; text: string | null; payload_hash: string; status: string; attempts: number; next_attempt: number; purpose: string; after_thread_id: string | null; after_request_id: string | null };
 export type Review = { review_id: string; route_id: string; writer_id: string; reviewer_id: string; event_id: string; work_ref: string; request_id: string; feedback_id: string; resolution_id: string; phase: string; payload_hash: string };
 
+/** Pre-fix bindings were [path, dev, ino, origin]; dev changes across reboots, so ignore only that field. */
+export function legacyBindingMatches(stored: string, current: string): boolean {
+  try {
+    const old = JSON.parse(stored), now = JSON.parse(current);
+    return Array.isArray(old) && Array.isArray(now) && old.length === 4 && now.length === 3
+      && old[0] === now[0] && old[2] === now[1] && old[3] === now[2];
+  } catch { return false; }
+}
+
 /** Local delivery state only. Bodies are removed once the T3 projection confirms receipt. */
 export class Mailbox {
   readonly db: DatabaseSync;
@@ -43,7 +52,9 @@ export class Mailbox {
     const cols = (this.db.prepare("PRAGMA table_info(outbox)").all() as { name: string }[]).map(c => c.name);
     if (!cols.includes("after_thread_id")) this.db.exec("ALTER TABLE outbox ADD COLUMN after_thread_id TEXT; ALTER TABLE outbox ADD COLUMN after_request_id TEXT;");
     this.db.prepare("INSERT OR IGNORE INTO binding VALUES(1,?)").run(binding);
-    if ((this.db.prepare("SELECT value FROM binding WHERE id=1").get() as {value:string}).value !== binding) {
+    const stored = (this.db.prepare("SELECT value FROM binding WHERE id=1").get() as {value:string}).value;
+    if (stored !== binding && legacyBindingMatches(stored, binding)) this.db.prepare("UPDATE binding SET value=? WHERE id=1").run(binding);
+    else if (stored !== binding) {
       this.db.close(); throw new Error("Mailbox belongs to a different T3 database/origin. Use its original configuration.");
     }
   }

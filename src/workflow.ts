@@ -34,7 +34,8 @@ export function loadRoutes() {
 export function mailboxBinding() {
   const path=realpathSync(databasePath()), stat=statSync(path);
   // The desktop runtime may choose another port after restart. Explicit origins stay pinned.
-  return JSON.stringify([path,stat.dev,stat.ino,process.env.T3_ORIGIN ? discoverOrigin() : 'desktop-runtime']);
+  // st_dev is not used: macOS renumbers volumes across reboots while path and inode stay put.
+  return JSON.stringify([path,stat.ino,process.env.T3_ORIGIN ? discoverOrigin() : 'desktop-runtime']);
 }
 export class WorkflowService {
   private box?: Mailbox;

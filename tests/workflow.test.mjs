@@ -102,6 +102,17 @@ test('binding follows database identity, not desktop port, while explicit origin
  } finally {if(oldDb===undefined)delete process.env.T3_DATABASE;else process.env.T3_DATABASE=oldDb;if(oldOrigin===undefined)delete process.env.T3_ORIGIN;else process.env.T3_ORIGIN=oldOrigin;}
 });
 
+test('legacy binding survives a volume renumber but not a different file',t=>{
+ const f=setup(t),dir=join(f.dir,'legacy');
+ const now=JSON.stringify(['/db/state.sqlite',42,'desktop-runtime']);
+ const seed=new Mailbox(JSON.stringify(['/db/state.sqlite',16777230,42,'desktop-runtime']),dir);seed.close();
+ const migrated=new Mailbox(now,dir);
+ try {assert.equal(migrated.db.prepare('SELECT value FROM binding').get().value,now);} finally {migrated.close();}
+ assert.throws(()=>new Mailbox(JSON.stringify(['/db/state.sqlite',43,'desktop-runtime']),dir));
+ const other=join(f.dir,'legacy-other');new Mailbox(JSON.stringify(['/db/state.sqlite',16777230,99,'desktop-runtime']),other).close();
+ assert.throws(()=>new Mailbox(now,other));
+});
+
 test('conditional delivery waits for another request to end, then delivers once',async t=>{
  const f=setup(t),id=randomUUID();f.setMode('ok');
  f.projection.set('req-ds',{thread_id:'ds',role:'user',text:'work'});
