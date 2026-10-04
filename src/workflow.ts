@@ -9,7 +9,7 @@ import { databasePath, discoverOrigin } from "./config.js";
 const id = z.string().min(1).max(200);
 const message = z.string().trim().min(1).max(16000);
 export const schemas = { ...baseSchemas,
-  queue_message: z.object({ threadId:id, requestId:z.string().uuid(), message }).strict(),
+  queue_message: z.object({ threadId:id, requestId:z.string().uuid(), message, afterThreadId:id.optional(), afterRequestId:id.optional() }).strict(),
   delivery_status: z.object({ limit:z.number().int().min(1).max(50).default(10) }).strict(),
   deliver_pending: z.object({ limit:z.number().int().min(1).max(10).default(3) }).strict(),
   request_review: z.object({ routeId:id, eventId:id, kind:z.enum(['ready','problem']), workRef:z.string().min(1).max(2000), summary:z.string().trim().min(1).max(10000) }).strict(),
@@ -18,14 +18,14 @@ export const schemas = { ...baseSchemas,
 };
 export type ToolName = keyof typeof schemas;
 export const descriptions: Record<ToolName,string> = { ...baseDescriptions,
-  queue_message:'Persist an authorized message before delivery. Requires stable UUID. Worker retries busy threads with original text. Not mid-turn steering.',
+  queue_message:'Persist an authorized message before delivery. Requires stable UUID. Worker retries busy threads with original text. Optional afterThreadId+afterRequestId: hold delivery until that request\'s turn has ended (completed, interrupted or error) — event-driven wake-up instead of polling. Not mid-turn steering.',
   delivery_status:'Read bounded local delivery receipts and review phases, without message bodies.',
   deliver_pending:'Deliver a bounded batch of durable messages and advance configured reviews. Starts authorized turns. Normally called by the local worker.',
   request_review:'Request read-only review of a ready action or problem on a configured writer/reviewer route. eventId deduplicates; workRef must identify exact commit or dirty diff artifact/hash. No timer-triggered reviews.',
   cancel_review:'Stop a stuck review and cancel provably unattempted messages, retaining text. Cannot recall messages already sent. Does not approve or interrupt provider turns.',
   resolve_review:'Close feedback by reporting adopted/rejected/deferred findings with reasons and evidence to the reviewer. Does not trigger another review.',
 };
-export const mutatingTools = new Set(['send_message','queue_message','deliver_pending','request_review','resolve_review','cancel_review']);
+export const mutatingTools = new Set(['send_message','spawn_thread','interrupt_thread','archive_thread','queue_message','deliver_pending','request_review','resolve_review','cancel_review']);
 const routesSchema = z.record(z.string(),z.object({ writerThreadId:id, reviewerThreadId:id }).strict());
 export function loadRoutes() {
   try { return routesSchema.parse(JSON.parse(readFileSync(process.env.T3_PRIME_ROUTES_FILE ?? join(homedir(),'.config/t3-code-mcp-prime/routes.json'),'utf8'))); }
@@ -34,7 +34,8 @@ export function loadRoutes() {
 export function mailboxBinding() {
   const path=realpathSync(databasePath()), stat=statSync(path);
   // The desktop runtime may choose another port after restart. Explicit origins stay pinned.
-  return JSON.stringify([path,stat.dev,stat.ino,process.env.T3_ORIGIN ? discoverOrigin() : 'desktop-runtime']);
+  // st_dev is not used: macOS renumbers volumes across reboots while path and inode stay put.
+  return JSON.stringify([path,stat.ino,process.env.T3_ORIGIN ? discoverOrigin() : 'desktop-runtime']);
 }
 export class WorkflowService {
   private box?: Mailbox;
@@ -46,12 +47,15 @@ export class WorkflowService {
     const a:any=schemas[name].parse(input), b=this.mailbox;
     if(name==='queue_message') {
       this.prime.store.thread(a.threadId);
-      const m=b.transaction(()=>b.enqueue(a.requestId,a.threadId,a.message));
-      return {requestId:m.request_id,status:m.status,durable:true};
+      if((a.afterThreadId?1:0)!==(a.afterRequestId?1:0)) throw new Error('afterThreadId and afterRequestId must be given together.');
+      if(a.afterThreadId) { this.prime.store.thread(a.afterThreadId); if(!this.prime.store.one('SELECT 1 FROM projection_thread_messages WHERE message_id=? AND thread_id=?',a.afterRequestId,a.afterThreadId)) throw new Error('afterRequestId is not a known user message in afterThreadId.'); }
+      const after=a.afterThreadId?{threadId:a.afterThreadId,requestId:a.afterRequestId}:undefined;
+      const m=b.transaction(()=>b.enqueue(a.requestId,a.threadId,a.message,'message',after));
+      return {requestId:m.request_id,status:m.status,durable:true,...(after?{waitsFor:after}:{})};
     }
     if(name==='delivery_status') return {
       routes:Object.entries(this.routes()).slice(0,50).map(([routeId,route])=>({routeId,...route})),
-      messages:b.db.prepare("SELECT request_id,thread_id,status,purpose,attempts,next_attempt,last_error,CASE WHEN status='pending' AND attempts>=5 THEN 1 ELSE 0 END AS stalled FROM outbox ORDER BY created_at DESC LIMIT ?").all(a.limit),
+      messages:b.db.prepare("SELECT request_id,thread_id,status,purpose,attempts,next_attempt,last_error,after_thread_id,after_request_id,CASE WHEN status='pending' AND attempts>=5 THEN 1 ELSE 0 END AS stalled FROM outbox ORDER BY created_at DESC LIMIT ?").all(a.limit),
       reviews:b.db.prepare('SELECT review_id,route_id,event_id,work_ref,phase FROM reviews ORDER BY created_at DESC LIMIT ?').all(a.limit)
     };
     if(name==='request_review') {
@@ -99,6 +103,10 @@ export class WorkflowService {
       const messages=b.db.prepare("SELECT a.* FROM outbox a WHERE a.status='pending' AND a.next_attempt<=? AND NOT EXISTS (SELECT 1 FROM outbox older WHERE older.thread_id=a.thread_id AND older.status='pending' AND older.rowid<a.rowid) ORDER BY a.rowid LIMIT ?").all(Date.now(),limit) as Mail[];
       for(const m of messages) {
         if(!b.renew(owner)) break;
+        if(m.after_thread_id && m.after_request_id) {
+          const turn=this.prime.store.request(m.after_thread_id,m.after_request_id);
+          if(!turn || !['completed','interrupted','error'].includes(String(turn.state))) { b.hold(m.request_id,`Waiting for request ${m.after_request_id} in ${m.after_thread_id} to end`); continue; }
+        }
         try {
           const existing=this.prime.store.one('SELECT thread_id,role,text FROM projection_thread_messages WHERE message_id=?',m.request_id);
           if(!existing) {
